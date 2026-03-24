@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TCP Sliding Window Simulator</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
+
+  :root {
+    --bg:       #0d1117;
+    --surface:  #161b22;
+    --border:   #30363d;
+    --accent:   #2f81f7;
+    --warn:     #f85149;
+    --ok:       #2ea043;
+    --muted:    #21262d;
+    --text:     #e6edf3;
+    --dim:      #7d8590;
+    --phase-ss: #d29922;
+    --phase-ca: #2f81f7;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /* Full viewport, nothing overflows */
+  html, body {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Monospace only where it matters */
+  #log, .btn, input, .stat-card .value, .pkt .num {
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* ── Header ── */
+  header {
+    flex-shrink: 0;
+    padding: 14px 28px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: var(--surface);
+  }
+  .logo-mark {
+    width: 34px; height: 34px;
+    background: var(--accent);
+    border-radius: 6px;
+    display: grid;
+    place-items: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+    flex-shrink: 0;
+  }
+  header h1 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+  header h1 span { color: var(--dim); font-weight: 400; }
+  .status-pill {
+    margin-left: auto;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .68rem;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    color: var(--dim);
+    background: var(--bg);
+    transition: all .2s;
+  }
+  .status-pill.connected { border-color: rgba(46,160,67,.5);  color: var(--ok); }
+  .status-pill.running   { border-color: rgba(47,129,247,.5); color: var(--accent); }
+  .status-pill.error     { border-color: rgba(248,81,73,.5);  color: var(--warn); }
+
+  /* ── Main: fills remaining viewport height ── */
+  .main {
+    flex: 1;
+    min-height: 0;           /* critical: lets flex children shrink below content size */
+    display: grid;
+    grid-template-columns: 270px 1fr;
+    grid-template-rows: auto auto 1fr;
+    gap: 1px;
+    background: var(--border);
+    overflow: hidden;
+  }
+
+  .panel {
+    background: var(--bg);
+    padding: 16px 18px;
+    overflow: hidden;
+  }
+
+  /* ── Left column: controls span all 3 rows, scrollable ── */
+  .controls {
+    grid-row: 1 / 4;
+    overflow-y: auto;
+    padding: 16px 18px;
+    background: var(--bg);
+  }
+  .controls::-webkit-scrollbar { width: 3px; }
+  .controls::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .section-label {
+    font-size: .65rem;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 12px;
+    padding-bottom: 7px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* ── Fields ── */
+  .field { margin-bottom: 13px; }
+  .field label {
+    display: block;
+    font-size: .73rem;
+    font-weight: 500;
+    color: var(--dim);
+    margin-bottom: 4px;
+  }
+  .field input[type=range] {
+    width: 100%;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .field .val {
+    display: flex;
+    justify-content: space-between;
+    font-size: .68rem;
+    font-family: 'JetBrains Mono', monospace;
+    margin-top: 3px;
+  }
+  .val .current { color: var(--accent); font-weight: 600; }
+  .val .bounds  { color: var(--muted); }
+
+  /* ── Buttons ── */
+  .btn {
+    width: 100%;
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .72rem;
+    font-weight: 600;
+    letter-spacing: .04em;
+    cursor: pointer;
+    transition: all .15s;
+    text-transform: uppercase;
+  }
+  .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn-primary:hover { background: #388bfd; border-color: #388bfd; }
+  .btn-primary:disabled { background: var(--muted); border-color: var(--muted); color: var(--dim); cursor: not-allowed; }
+  .btn-danger { background: transparent; border-color: var(--border); color: var(--dim); margin-top: 5px; }
+  .btn-danger:hover { border-color: var(--warn); color: var(--warn); }
+  .btn-danger:disabled { opacity: .35; cursor: not-allowed; }
+
+  /* ── Stat grid ── */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+    margin-top: 14px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+  }
+  .stat-card.wide { grid-column: 1 / -1; }
+  .stat-card .label {
+    font-size: .55rem;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .stat-card .value {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-top: 2px;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .stat-card .value.accent { color: var(--accent); }
+  .stat-card .value.ok     { color: var(--ok); }
+  .stat-card .value.amber  { color: var(--phase-ss); }
+  .stat-card .value.warn   { color: var(--warn); }
+  .stat-card .value.sm     { font-size: .85rem; }
+
+  .stat-divider {
+    grid-column: 1 / -1;
+    font-size: .55rem;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding-top: 8px;
+    margin-top: 4px;
+    border-top: 1px solid var(--border);
+  }
+
+  /* ── Packet pipeline (row 1, right column) ── */
+  .pipeline-panel { border-bottom: 1px solid var(--border); }
+  .pipeline-wrap  { overflow-x: auto; padding: 8px 0 4px; }
+  .pipeline       { display: flex; gap: 5px; min-width: max-content; }
+  .pkt {
+    width: 40px; height: 40px;
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: .58rem;
+    font-weight: 600;
+    border: 1px solid transparent;
+    transition: background .25s, border-color .25s, color .25s;
+    flex-shrink: 0;
+  }
+  .pkt .num { font-size: .68rem; font-family: 'JetBrains Mono', monospace; }
+  .pkt.acked     { background: rgba(46,160,67,.12);  border-color: rgba(46,160,67,.4);  color: var(--ok); }
+  .pkt.in-flight { background: rgba(47,129,247,.1);  border-color: rgba(47,129,247,.5); color: var(--accent); }
+  .pkt.fastretx  { background: rgba(248,81,73,.12);  border-color: rgba(248,81,73,.6);  color: var(--warn); }
+  .pkt.dupack    { background: rgba(210,153,34,.1);  border-color: rgba(210,153,34,.5); color: var(--phase-ss); }
+  .pkt.timeout   { background: rgba(248,81,73,.08);  border-color: var(--warn);         color: var(--warn); }
+  .pkt.pending   { background: var(--surface); border-color: var(--border); color: var(--dim); }
+
+  /* ── Graph (row 2, right column) ── */
+  .graph-panel { border-bottom: 1px solid var(--border); }
+  .graph-wrap  { position: relative; height: 170px; }
+
+  /* ── Log (row 3, right column) — fills remaining height ── */
+  .log-panel {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--bg);
+  }
+  .log-header {
+    flex-shrink: 0;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .log-header .section-label { margin: 0; padding: 0; border: none; }
+  .log-clear {
+    font-size: .62rem;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--dim);
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+  .log-clear:hover { color: var(--accent); }
+
+  #log {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 8px 16px;
+    font-size: .68rem;
+    line-height: 1.7;
+    color: var(--dim);
+  }
+  #log::-webkit-scrollbar { width: 3px; }
+  #log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .log-entry          { display: flex; gap: 10px; }
+  .log-entry .ts      { color: var(--border); flex-shrink: 0; font-family: 'JetBrains Mono', monospace; }
+  .log-entry.send     .msg { color: var(--accent); }
+  .log-entry.ack      .msg { color: var(--ok); }
+  .log-entry.drop     .msg { color: var(--warn); }
+  .log-entry.timeout  .msg { color: var(--phase-ss); }
+  .log-entry.fastretx .msg { color: #f0883e; }
+  .log-entry.dupack   .msg { color: var(--phase-ss); }
+  .log-entry.phase    .msg { color: var(--dim); font-style: italic; }
+  .log-entry.done     .msg { color: var(--ok); font-weight: 600; }
+  .log-entry.system   .msg { color: #8b949e; }
+
+  /* ── Legend ── */
+  .legend {
+    flex-shrink: 0;
+    display: flex;
+    gap: 12px;
+    padding: 7px 16px;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: .6rem; color: var(--dim); }
+  .legend-dot  { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+  @media (max-width: 768px) {
+    .main { grid-template-columns: 1fr; grid-template-rows: none; }
+    .controls { grid-row: auto; }
+    html, body { overflow: auto; height: auto; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-mark">TCP</div>
+  <div>
+    <h1>Sliding Window <span>/ Simulator</span></h1>
+    <div style="font-size:.65rem;color:var(--dim);margin-top:1px;font-family:'JetBrains Mono',monospace;">
+      UDP · AIMD · adaptive RTO · fast retransmit
+    </div>
+  </div>
+  <div class="status-pill" id="status-pill">Disconnected</div>
+</header>
+
+<div class="main">
+
+  <!-- ── Left: Controls (spans all 3 rows) ── -->
+  <div class="controls">
+    <div class="section-label">Parameters</div>
+
+    <div class="field">
+      <label>Total Packets</label>
+      <div class="val">
+        <span class="bounds">1</span>
+        <span class="current" id="pkt-val">15</span>
+        <span class="bounds">50</span>
+      </div>
+      <input type="range" id="total-packets" min="1" max="50" value="15"
+             oninput="document.getElementById('pkt-val').textContent=this.value" />
+    </div>
+
+    <div class="field">
+      <label>Initial Window Size</label>
+      <div class="val">
+        <span class="bounds">1</span>
+        <span class="current" id="win-val">4</span>
+        <span class="bounds">20</span>
+      </div>
+      <input type="range" id="initial-window" min="1" max="20" value="4"
+             oninput="document.getElementById('win-val').textContent=this.value" />
+    </div>
+
+    <div class="field">
+      <label>Loss Probability</label>
+      <div class="val">
+        <span class="bounds">0%</span>
+        <span class="current" id="loss-val">20%</span>
+        <span class="bounds">80%</span>
+      </div>
+      <input type="range" id="loss-prob" min="0" max="0.8" step="0.01" value="0.2"
+             oninput="document.getElementById('loss-val').textContent=Math.round(this.value*100)+'%'" />
+    </div>
+
+    <button class="btn btn-primary" id="btn-start" onclick="startSim()" disabled>▶ Start Simulation</button>
+    <button class="btn btn-danger"  id="btn-stop"  onclick="stopSim()"  disabled>■ Stop</button>
+
+    <!-- Congestion control stats -->
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="label">CWND</div>
+        <div class="value accent" id="stat-cwnd">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">ssthresh</div>
+        <div class="value" id="stat-ssthresh">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Phase</div>
+        <div class="value sm" id="stat-phase">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Base Seq</div>
+        <div class="value ok" id="stat-base">—</div>
+      </div>
+
+      <!-- RTT section -->
+      <div class="stat-divider">RTT Metrics</div>
+
+      <div class="stat-card">
+        <div class="label">Avg RTT</div>
+        <div class="value amber" id="stat-avg-rtt">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">RTT Var</div>
+        <div class="value" id="stat-rtt-var">—</div>
+      </div>
+      <div class="stat-card wide">
+        <div class="label">Adaptive RTO</div>
+        <div class="value warn" id="stat-rto">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Row 1 right: Packet Pipeline ── -->
+  <div class="panel pipeline-panel">
+    <div class="section-label" style="margin-bottom:8px">Packet Pipeline</div>
+    <div class="pipeline-wrap">
+      <div class="pipeline" id="pipeline"></div>
+    </div>
+  </div>
+
+  <!-- ── Row 2 right: Graph ── -->
+  <div class="panel graph-panel">
+    <div class="section-label">Congestion Window (CWND) — Real-time</div>
+    <div class="graph-wrap">
+      <canvas id="cwnd-chart"></canvas>
+    </div>
+  </div>
+
+  <!-- ── Row 3 right: Log (fills remaining height) ── -->
+  <div class="log-panel">
+    <div class="log-header">
+      <div class="section-label">Network Log</div>
+      <button class="log-clear" onclick="clearLog()">clear</button>
+    </div>
+    <div id="log"></div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div>Send</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--ok)"></div>ACK + RTT</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--warn)"></div>Drop / Timeout</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f0883e"></div>Fast Retransmit</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--phase-ss)"></div>Dup ACK</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--dim)"></div>Phase</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let ws = null, chartInst = null;
+let chartLabels = [], chartCwnd = [], chartSsthresh = [];
+let totalPkts = 15, pktStates = {};
+
+// ── WebSocket ──────────────────────────────────────────────────────────────────
+function connect() {
+  setPill('Connecting…', '');
+  ws = new WebSocket('ws://127.0.0.1:8081');
+  ws.onopen  = () => { setPill('Connected', 'connected'); document.getElementById('btn-start').disabled = false; };
+  ws.onclose = () => {
+    setPill('Disconnected', '');
+    document.getElementById('btn-start').disabled = true;
+    document.getElementById('btn-stop').disabled  = true;
+    setTimeout(connect, 2000);
+  };
+  ws.onerror   = () => setPill('Error', 'error');
+  ws.onmessage = (e) => handleMsg(JSON.parse(e.data));
+}
+
+function handleMsg(msg) {
+  switch (msg.type) {
+    case 'connected': break;
+    case 'started':
+      setPill('Running', 'running');
+      document.getElementById('btn-stop').disabled  = false;
+      document.getElementById('btn-start').disabled = true;
+      resetChart(); addLog('system', msg.msg); break;
+    case 'stopped':
+    case 'done':
+      setPill('Connected', 'connected');
+      document.getElementById('btn-stop').disabled  = true;
+      document.getElementById('btn-start').disabled = false;
+      addLog('done', msg.msg || 'Simulation complete ✓'); break;
+    case 'log':   parseAndLog(msg.msg); break;
+    case 'stats': updateStats(msg.data); break;
+    case 'error': addLog('system', '⚠ ' + msg.msg); break;
+  }
+}
+
+// ── Simulation control ─────────────────────────────────────────────────────────
+function startSim() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  totalPkts = parseInt(document.getElementById('total-packets').value);
+  pktStates = {};
+  for (let i = 0; i < totalPkts; i++) pktStates[i] = 'pending';
+  renderPipeline();
+  ws.send(JSON.stringify({
+    action: 'start',
+    params: {
+      total_packets:  totalPkts,
+      initial_window: parseInt(document.getElementById('initial-window').value),
+      loss_prob:      parseFloat(document.getElementById('loss-prob').value),
+    }
+  }));
+}
+
+function stopSim() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ action: 'stop' }));
+}
+
+// ── Log parsing ────────────────────────────────────────────────────────────────
+function parseAndLog(raw) {
+  const r = raw.trim(); if (!r) return;
+  let cls = 'system';
+  if      (r.includes('sender:send'))     { cls = 'send';     const m = r.match(/seq=(\d+)/); if (m) markPkt(+m[1], 'in-flight'); }
+  else if (r.includes('sender:fastretx')) { cls = 'fastretx'; const m = r.match(/seq=(\d+)/); if (m) markPkt(+m[1], 'fastretx'); }
+  else if (r.includes('sender:dupack'))   { cls = 'dupack';   const m = r.match(/ack=(\d+)/); if (m) markPkt(+m[1]+1, 'dupack'); }
+  else if (r.includes('sender:ack'))      { cls = 'ack';      const m = r.match(/seq=(\d+)/); if (m) markPkt(+m[1], 'acked'); }
+  else if (r.includes('sender:timeout'))  { cls = 'timeout';  const m = r.match(/seq=(\d+)/); if (m) markPkt(+m[1], 'timeout'); }
+  else if (r.includes('channel:drop'))    { cls = 'drop'; }
+  else if (r.includes('channel:'))        { cls = 'send'; }
+  else if (r.includes('receiver:'))       { cls = 'ack'; }
+  else if (r.includes('phase'))           { cls = 'phase'; }
+  else if (r.includes('complete') || r.includes('done')) { cls = 'done'; }
+  addLog(cls, r);
+}
+
+function addLog(cls, text) {
+  const log = document.getElementById('log');
+  const now = new Date();
+  const ts  = `${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}.${String(now.getMilliseconds()).padStart(3,'0')}`;
+  const el  = document.createElement('div');
+  el.className = `log-entry ${cls}`;
+  el.innerHTML = `<span class="ts">${ts}</span><span class="msg">${escHtml(text)}</span>`;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+}
+
+function clearLog() { document.getElementById('log').innerHTML = ''; }
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Stats ──────────────────────────────────────────────────────────────────────
+function updateStats(d) {
+  document.getElementById('stat-cwnd').textContent     = d.cwnd;
+  document.getElementById('stat-ssthresh').textContent = d.ssthresh;
+  document.getElementById('stat-base').textContent     = d.base;
+
+  // RTT metrics — only show once we have samples
+  document.getElementById('stat-avg-rtt').textContent  = d.avg_rtt > 0 ? d.avg_rtt + 'ms' : '—';
+  document.getElementById('stat-rtt-var').textContent  = d.rtt_var > 0 ? '±' + d.rtt_var + 'ms' : '—';
+  document.getElementById('stat-rto').textContent      = d.rto_ms + 'ms';
+
+  const phaseEl = document.getElementById('stat-phase');
+  if (d.phase === 'slow_start') {
+    phaseEl.textContent = 'Slow Start'; phaseEl.style.color = 'var(--phase-ss)';
+  } else {
+    phaseEl.textContent = 'Cong. Avoid'; phaseEl.style.color = 'var(--phase-ca)';
+  }
+
+  chartLabels.push(d.step); chartCwnd.push(d.cwnd); chartSsthresh.push(d.ssthresh);
+  if (chartInst) {
+    chartInst.data.labels            = chartLabels;
+    chartInst.data.datasets[0].data  = chartCwnd;
+    chartInst.data.datasets[1].data  = chartSsthresh;
+    chartInst.update('none');
+  }
+}
+
+// ── Pipeline ───────────────────────────────────────────────────────────────────
+function markPkt(seq, state) {
+  if (!(seq in pktStates) || pktStates[seq] === 'acked') return;
+  pktStates[seq] = state; renderPipeline();
+}
+
+function renderPipeline() {
+  const c = document.getElementById('pipeline');
+  c.innerHTML = '';
+  const icons = { acked:'✓', timeout:'✕', fastretx:'⚡', dupack:'≡', 'in-flight':'↑', pending:'·' };
+  for (let i = 0; i < totalPkts; i++) {
+    const s = pktStates[i] || 'pending';
+    const d = document.createElement('div');
+    d.className = `pkt ${s}`;
+    d.innerHTML = `<span class="num">${i}</span><span>${icons[s]||'·'}</span>`;
+    c.appendChild(d);
+  }
+}
+
+// ── Chart ──────────────────────────────────────────────────────────────────────
+function initChart() {
+  const ctx = document.getElementById('cwnd-chart').getContext('2d');
+  chartInst = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: chartLabels,
+      datasets: [
+        { label: 'CWND', data: chartCwnd, borderColor: '#2f81f7',
+          backgroundColor: 'rgba(47,129,247,.07)', borderWidth: 2,
+          pointRadius: 2, tension: 0.3, fill: true },
+        { label: 'ssthresh', data: chartSsthresh, borderColor: '#d29922',
+          borderWidth: 1.5, borderDash: [5,4], pointRadius: 0, tension: 0, fill: false }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: { legend: { labels: { color: '#7d8590', font: { family: 'JetBrains Mono', size: 11 } } } },
+      scales: {
+        x: { ticks: { color: '#484f58', maxTicksLimit: 12, font: { size: 10 } }, grid: { color: '#21262d' } },
+        y: { ticks: { color: '#484f58', font: { size: 10 } }, grid: { color: '#21262d' }, min: 0 }
+      }
+    }
+  });
+}
+
+function resetChart() {
+  chartLabels = []; chartCwnd = []; chartSsthresh = [];
+  if (chartInst) {
+    chartInst.data.labels            = chartLabels;
+    chartInst.data.datasets[0].data  = chartCwnd;
+    chartInst.data.datasets[1].data  = chartSsthresh;
+    chartInst.update('none');
+  }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+function setPill(text, cls) {
+  const p = document.getElementById('status-pill');
+  p.textContent = text; p.className = 'status-pill ' + (cls || '');
+}
+
+initChart();
+connect();
+</script>
+</body>
+</html>
