@@ -64,7 +64,7 @@ Sender ◄──UDP── NetworkChannel ◄────────────
 **Requirements:** Python 3.11+ — no `pip install` needed.
 
 ```bash
-git clone https://github.com/your-username/tcp-sliding-window-simulator
+git clone https://github.com/YashSankhe2701/TCP-Sliding-Window-Simulation.git
 cd tcp-sliding-window-simulator
 python3 server.py
 ```
