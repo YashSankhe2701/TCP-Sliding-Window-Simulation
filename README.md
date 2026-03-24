@@ -1,6 +1,10 @@
 # TCP Sliding Window Simulator
 
-A full-stack network simulation tool that implements **TCP-like reliability over raw UDP sockets** — built entirely with Python's standard library and vanilla JavaScript. No frameworks, no external dependencies.
+https://github.com/user-attachments/assets/98d7fd56-388e-462e-8b4e-4f355de57b72
+
+A full-stack network simulation tool that implements **TCP-like reliability over raw UDP sockets** — built entirely with Python's standa
+
+rd library and vanilla JavaScript. No frameworks, no external dependencies.
 
 > Built as a portfolio project to demonstrate applied knowledge of computer networking, systems programming, and full-stack development.
 
